@@ -1,0 +1,256 @@
+import sqlite3
+from datetime import datetime
+
+# -----------------------------
+# Database Manager
+# -----------------------------
+class DatabaseManager:
+    def __init__(self, db_name="inventory_system.db"):
+        self.conn = sqlite3.connect(db_name)
+        self.create_tables()
+
+    def create_tables(self):
+        cursor = self.conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            product_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT,
+            price REAL NOT NULL,
+            quantity INTEGER DEFAULT 0
+        )
+        """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sales (
+            sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER,
+            quantity INTEGER,
+            total_amount REAL,
+            date TEXT,
+            FOREIGN KEY(product_id) REFERENCES products(product_id)
+        )
+        """)
+        self.conn.commit()
+
+    def add_product(self, product):
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?)",
+                       (product.product_id, product.name, product.category, product.price, product.quantity))
+        self.conn.commit()
+
+    def update_stock(self, product_id, qty):
+        cursor = self.conn.cursor()
+        cursor.execute("UPDATE products SET quantity = quantity + ? WHERE product_id = ?", (qty, product_id))
+        self.conn.commit()
+
+    def reduce_stock(self, product_id, qty):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT quantity FROM products WHERE product_id = ?", (product_id,))
+        current_qty = cursor.fetchone()[0]
+        if current_qty >= qty:
+            cursor.execute("UPDATE products SET quantity = quantity - ? WHERE product_id = ?", (qty, product_id))
+            self.conn.commit()
+        else:
+            raise ValueError("Insufficient stock")
+
+    def record_sale(self, product_id, qty, total_amount):
+        cursor = self.conn.cursor()
+        cursor.execute("INSERT INTO sales (product_id, quantity, total_amount, date) VALUES (?, ?, ?, ?)",
+                       (product_id, qty, total_amount, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        self.conn.commit()
+
+    def get_products(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM products")
+        return cursor.fetchall()
+
+    def get_sales(self):
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM sales")
+        return cursor.fetchall()
+
+# -----------------------------
+# Domain Classes
+# -----------------------------
+class Product:
+    def __init__(self, product_id, name, category, price, quantity=0):
+        self.product_id = product_id
+        self.name = name
+        self.category = category
+        self.price = price
+        self.quantity = quantity
+
+class Sale:
+    def __init__(self, sale_id, product_id, quantity, total_amount, date):
+        self.sale_id = sale_id
+        self.product_id = product_id
+        self.quantity = quantity
+        self.total_amount = total_amount
+        self.date = date
+
+# -----------------------------
+# Inventory System Logic
+# -----------------------------
+class InventorySystem:
+    def __init__(self, db_manager):
+        self.db = db_manager
+
+    def add_product(self, product):
+        self.db.add_product(product)
+
+    def update_stock(self, product_id, qty):
+        self.db.update_stock(product_id, qty)
+
+    def record_sale(self, product_id, qty):
+        products = self.db.get_products()
+        product = next((p for p in products if p[0] == product_id), None)
+        if not product:
+            raise ValueError("Product not found")
+        price = product[3]
+        total = price * qty
+        self.db.reduce_stock(product_id, qty)
+        self.db.record_sale(product_id, qty, total)
+        return Sale(None, product_id, qty, total, datetime.now())
+
+import tkinter as tk
+from tkinter import messagebox, ttk
+from datetime import datetime
+
+# -----------------------------
+# Core Classes
+# -----------------------------
+
+class Product:
+    def __init__(self, product_id, name, category, price, quantity=0):
+        self.product_id = product_id
+        self.name = name
+        self.category = category
+        self.price = price
+        self.quantity = quantity
+
+    def update_stock(self, qty):
+        self.quantity += qty
+
+    def reduce_stock(self, qty):
+        if qty <= self.quantity:
+            self.quantity -= qty
+        else:
+            raise ValueError("Insufficient stock")
+
+class Sale:
+    def __init__(self, sale_id, product, quantity):
+        self.sale_id = sale_id
+        self.product = product
+        self.quantity = quantity
+        self.total_amount = product.price * quantity
+        self.date = datetime.now()
+
+    def record_sale(self):
+        self.product.reduce_stock(self.quantity)
+        return f"Sale recorded: {self.quantity} x {self.product.name} = {self.total_amount}"
+
+class InventorySystem:
+    def __init__(self):
+        self.products = {}
+        self.sales = []
+
+    def add_product(self, product):
+        self.products[product.product_id] = product
+
+    def record_sale(self, product_id, qty):
+        if product_id not in self.products:
+            raise ValueError("Product not found")
+        product = self.products[product_id]
+        sale = Sale(len(self.sales)+1, product, qty)
+        sale.record_sale()
+        self.sales.append(sale)
+        return sale
+class InventoryApp:
+    def __init__(self, root, system):
+        self.system = system
+        self.root = root
+        self.root.title("Local Market Inventory & Sales Management System")
+
+        # Product Frame
+        product_frame = tk.LabelFrame(root, text="Add Product")
+        product_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(product_frame, text="Product ID").grid(row=0, column=0)
+        tk.Label(product_frame, text="Name").grid(row=0, column=1)
+        tk.Label(product_frame, text="Category").grid(row=0, column=2)
+        tk.Label(product_frame, text="Price").grid(row=0, column=3)
+        tk.Label(product_frame, text="Quantity").grid(row=0, column=4)
+
+        self.pid = tk.Entry(product_frame)
+        self.name = tk.Entry(product_frame)
+        self.category = tk.Entry(product_frame)
+        self.price = tk.Entry(product_frame)
+        self.qty = tk.Entry(product_frame)
+
+        self.pid.grid(row=1, column=0)
+        self.name.grid(row=1, column=1)
+        self.category.grid(row=1, column=2)
+        self.price.grid(row=1, column=3)
+        self.qty.grid(row=1, column=4)
+
+        tk.Button(product_frame, text="Add Product", command=self.add_product).grid(row=1, column=5)
+
+        # Sales Frame
+        sales_frame = tk.LabelFrame(root, text="Record Sale")
+        sales_frame.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(sales_frame, text="Product ID").grid(row=0, column=0)
+        tk.Label(sales_frame, text="Quantity").grid(row=0, column=1)
+
+        self.sale_pid = tk.Entry(sales_frame)
+        self.sale_qty = tk.Entry(sales_frame)
+
+        self.sale_pid.grid(row=1, column=0)
+        self.sale_qty.grid(row=1, column=1)
+
+        tk.Button(sales_frame, text="Record Sale", command=self.record_sale).grid(row=1, column=2)
+
+        # Inventory Display
+        self.tree = ttk.Treeview(root, columns=("ID", "Name", "Category", "Price", "Quantity"), show="headings")
+        self.tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        for col in ("ID", "Name", "Category", "Price", "Quantity"):
+            self.tree.heading(col, text=col)
+
+    def add_product(self):
+        try:
+            product = Product(
+                int(self.pid.get()),
+                self.name.get(),
+                self.category.get(),
+                float(self.price.get()),
+                int(self.qty.get())
+            )
+            self.system.add_product(product)
+            self.refresh_inventory()
+            messagebox.showinfo("Success", "Product added successfully!")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def record_sale(self):
+        try:
+            sale = self.system.record_sale(int(self.sale_pid.get()), int(self.sale_qty.get()))
+            self.refresh_inventory()
+            messagebox.showinfo("Sale Recorded", f"{sale.quantity} x {sale.product.name} = {sale.total_amount}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def refresh_inventory(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for p in self.system.products.values():
+            self.tree.insert("", "end", values=(p.product_id, p.name, p.category, p.price, p.quantity))
+
+# -----------------------------
+# Run Application
+# -----------------------------
+if __name__ == "__main__":
+    root = tk.Tk()
+    system = InventorySystem()
+    app = InventoryApp(root, system)
+    root.mainloop()
